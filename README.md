@@ -10,7 +10,7 @@ This repository is part of a collaborative project by Group 5 in the 18-799-RW A
 The goal is to implement DeepGaze III for real-time monitoring of student engagement using standard webcams, which are more accessible and cost-effective than traditional eye-tracking hardware. We aim to enhance teaching strategies by providing educators with real-time feedback on student attention levels.
 
 ## Committing Experiments
-This repository will also serve as a record of all experiments conducted for the project. Regular updates will allow other group members and stakeholders to track progress and maintain transparency in our research process.
+This repository serves as a comprehensive record of all experiments conducted for the project. Each group member has created a branch under their name or Andrew ID, where they commit their ongoing experiments. These regular updates allow other group members and stakeholders to track progress and ensure transparency in our research project.
 
 ## Datasets
 We are using a synthetic dataset from the Gaze-Enhanced Smart Classroom for Attention Monitoring (GESCAM), specifically designed for educational settings to train and evaluate our gaze tracking model.
