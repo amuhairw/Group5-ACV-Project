@@ -4,7 +4,7 @@
 This repository is part of a collaborative project by Group 5 in the 18-799-RW Applied Computer Vision Course at CMU-Africa. Our project focuses on leveraging the DeepGaze III model to improve student engagement in educational settings through real-time gaze tracking.
 
 ## Repository Structure
-- `Mathew_GESCAM__A_Dataset_and_Method_on_Gaze_Estimation_for_CVPRW_2024_paper`: Building upon the paper titled "Real-Time Gaze Tracking for Enhanced Student Engagement: Leveraging DeepGaze III in Educational Settings".
+- `Mathew_GESCAM__A_Dataset_and_Method_on_Gaze_Estimation_for_CVPRW_2024_paper`: This is our baseline paper.
 
 ## Project Objective
 The goal is to implement DeepGaze III for real-time monitoring of student engagement using standard webcams, which are more accessible and cost-effective than traditional eye-tracking hardware. We aim to enhance teaching strategies by providing educators with real-time feedback on student attention levels.
