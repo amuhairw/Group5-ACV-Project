@@ -13,10 +13,9 @@ From these inputs, the model predicts:
 1. A heatmap showing where the person is looking
 2. A probability indicating whether the person is looking inside or outside the frame
 
-<video autoplay loop muted>
-  <source src="visualization.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+The input and output is summarized in the video below:
+
+![GESCAM Demo](./assets/Visualization.gif)
 
 Dataset
 The GESCAM dataset consists of annotated classroom images with:
