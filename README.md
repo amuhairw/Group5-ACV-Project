@@ -78,6 +78,9 @@ The system generates multiple types of visualizations:
 Combined heatmap showing where everyone in the classroom is looking
 Helps identify attention hotspots and patterns
 
+
+![GESCAM Demo](./assets/Attention_map.gif)
+
 ## POST MIDTERM
 
 Performance improvements:
