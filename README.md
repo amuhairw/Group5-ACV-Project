@@ -1,27 +1,170 @@
-# Project: Real-Time Gaze Tracking for Enhanced Student Engagement
+# GESCAM: Gaze Estimation for Classroom Attention Measurement
 
-## Overview
-This repository is part of a collaborative project by Group 5 in the 18-799-RW Applied Computer Vision Course at CMU-Africa. Our project focuses on leveraging the DeepGaze III model to improve student engagement in educational settings through real-time gaze tracking.
+This repository contains code for training and evaluating gaze estimation models on the GESCAM dataset. The system detects where people in classroom environments are looking based on their head position and appearance.
+Overview
+The GESCAM system uses a multi-stream architecture to predict gaze targets in classroom settings. The model takes as input:
 
-## Repository Structure
-- `Mathew_GESCAM__A_Dataset_and_Method_on_Gaze_Estimation_for_CVPRW_2024_paper`: This is our baseline paper.
+1. The full classroom image
+2. A crop of each person's head
+3. A binary mask showing the head's location in the image
 
-## Project Objective
-The goal is to implement DeepGaze III for real-time monitoring of student engagement using standard webcams, which are more accessible and cost-effective than traditional eye-tracking hardware. We aim to enhance teaching strategies by providing educators with real-time feedback on student attention levels.
+From these inputs, the model predicts:
 
-## Committing Experiments
-This repository serves as a comprehensive record of all experiments conducted for the project which will allow all the group members and stakeholders to track progress and ensure transparency in our research project.
+1. A heatmap showing where the person is looking
+2. A probability indicating whether the person is looking inside or outside the frame
 
-## Datasets
-We are using a synthetic dataset from the Gaze-Enhanced Smart Classroom for Attention Monitoring (GESCAM), specifically designed for educational settings to train and evaluate our gaze-tracking model.
+<video autoplay loop muted>
+  <source src="visualization.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
 
-## Group 5 Members Contact
-- bkoech@andrew.cmu.edu
-- ooe@andrew.cmu.edu
-- amuhairw@andrew.cmu.edu
+Dataset
+The GESCAM dataset consists of annotated classroom images with:
 
-## Acknowledgments
-Special thanks to our course instructors (Prof: Moise and Prof: Assane, and Gabrial) and our TA mentor (Brian Bosho) for their guidance and support throughout the project.
+Person bounding boxes
+Gaze direction polylines
+Frame metadata
 
-## Additional Resources
-For more information about the GESCAM dataset used in our experiments, visit [GESCAM Project Page](https://athulmmathew.github.io/GESCAM/).
+The dataset loader processes these annotations to create training samples by matching each person to their corresponding gaze target.
+File Structure
+
+gescam_customized_dataset.py: Dataset loader for GESCAM annotations
+ms_gescam_size_fix.py: MS-GESCAM model architecture
+gescam_kaggle_script.py: Training script for Kaggle environment
+gescam_validation.py: Validation and visualization script
+
+Model Architecture
+The MS-GESCAM model uses a multi-stream architecture:
+
+Head Pathway:
+
+Processes the head crop using a ResNet18 backbone
+Extracts features representing head pose and orientation
+
+
+Scene Pathway:
+
+Processes the full scene image plus head position mask
+Identifies potential gaze targets in the environment
+
+
+Attention Mechanism:
+
+Uses head features to generate an attention map
+Focuses the model on relevant regions of the scene
+
+
+Fusion and Decoding:
+
+Combines attended scene features with head features
+Decodes into a heatmap representing gaze location
+Predicts whether the person is looking inside or outside the frame
+
+
+
+Usage
+Installation
+bashCopy# Clone repository
+git clone https://github.com/yourusername/gescam.git
+cd gescam
+
+# Install dependencies
+pip install torch torchvision opencv-python matplotlib tqdm scikit-learn
+Data Preparation
+
+Organize your dataset:
+Copydata/
+├── images/
+│   ├── frame_000001.png
+│   ├── frame_000002.png
+│   └── ...
+└── annotations.xml
+
+The XML annotations should follow the GESCAM format with person bounding boxes and line of sight polylines.
+
+Training
+pythonCopypython gescam_kaggle_script.py
+This will:
+
+Load and preprocess the dataset
+Train the MS-GESCAM model
+Save checkpoints and visualizations
+Evaluate the model on a validation set
+
+Validation
+pythonCopypython gescam_validation.py
+This will:
+
+Load a trained model
+Evaluate performance using metrics like AUC, distance error, and angular error
+Generate visualizations of model predictions
+Create an attention heatmap video showing where everyone is looking
+
+Results
+Current validation metrics:
+
+AUC: 0.6197 ± 0.1300
+Distance Error: 0.4264 ± 0.2001
+Angular Error: 0.01° ± 0.01°
+In-frame Accuracy: 1.0000
+
+For comparison, state-of-the-art results from the papers:
+
+AUC of 0.921 on GazeFollow dataset
+AUC of 0.860 on VideoAttentionTarget dataset
+AUC of 0.943 on the full GESCAM dataset
+
+Visualization
+The system generates multiple types of visualizations:
+
+Individual predictions:
+
+Scene image with person bounding box
+Predicted and ground truth gaze heatmaps
+Heatmap overlays on the original image
+Error heatmap showing prediction differences
+
+
+Attention heatmap video:
+
+Combined heatmap showing where everyone in the classroom is looking
+Helps identify attention hotspots and patterns
+
+
+
+Future Work
+
+Performance improvements:
+
+Train for more epochs
+Use more data or better augmentation
+Experiment with different architectures
+
+
+Analysis tools:
+
+Quantify classroom attention patterns
+Identify areas of high/low student engagement
+Track attention over time
+
+
+Applications:
+
+Real-time classroom attention monitoring
+Educational research tools
+Feedback systems for teachers
+
+
+
+References
+
+Chong, E., Wang, Y., Ruiz, N., & Rehg, J. M. (2020). Detecting Attended Visual Targets in Video. CVPR 2020.
+Mathew, A. M., Khan, A. A., Khalid, T., & Souissi, R. (2024). GESCAM: A Dataset and Method on Gaze Estimation for Classroom Attention Measurement. CVPR Workshop 2024.
+
+License
+[Specify your license information here]
+Acknowledgments
+
+The GESCAM dataset creators
+PyTorch team for the deep learning framework
+[Add any other acknowledgments]
