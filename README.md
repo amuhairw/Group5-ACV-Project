@@ -17,153 +17,84 @@ The input and output is summarized in the video below:
 
 ![GESCAM Demo](./assets/Visualization.gif)
 
-Dataset
+## Dataset
+
 The GESCAM dataset consists of annotated classroom images with:
 
-Person bounding boxes
-Gaze direction polylines
-Frame metadata
+1. Person bounding boxes
+2. Gaze direction polylines
+3. Frame metadata
 
 The dataset loader processes these annotations to create training samples by matching each person to their corresponding gaze target.
-File Structure
 
-gescam_customized_dataset.py: Dataset loader for GESCAM annotations
-ms_gescam_size_fix.py: MS-GESCAM model architecture
-gescam_kaggle_script.py: Training script for Kaggle environment
-gescam_validation.py: Validation and visualization script
+## Model Architecture
 
-Model Architecture
 The MS-GESCAM model uses a multi-stream architecture:
 
-Head Pathway:
+### Head Pathway
 
-Processes the head crop using a ResNet18 backbone
-Extracts features representing head pose and orientation
+Processes the head crop using a ResNet18 backbone and extracts features representing head pose and orientation
 
+### Scene Pathway
 
-Scene Pathway:
+Processes the full scene image plus head position mask and identifies potential gaze targets in the environment
 
-Processes the full scene image plus head position mask
-Identifies potential gaze targets in the environment
+### Attention Mechanism
 
+Uses head features to generate an attention map. It focuses the model on relevant regions of the scene
 
-Attention Mechanism:
+### Fusion and Decoding
 
-Uses head features to generate an attention map
-Focuses the model on relevant regions of the scene
+Combines attended scene features with head features and then decodes it  into a heatmap representing gaze location. It then predicts whether the person is looking inside or outside the frame
 
+## Results
 
-Fusion and Decoding:
-
-Combines attended scene features with head features
-Decodes into a heatmap representing gaze location
-Predicts whether the person is looking inside or outside the frame
-
-
-
-Usage
-Installation
-bashCopy# Clone repository
-git clone https://github.com/yourusername/gescam.git
-cd gescam
-
-# Install dependencies
-pip install torch torchvision opencv-python matplotlib tqdm scikit-learn
-Data Preparation
-
-Organize your dataset:
-Copydata/
-├── images/
-│   ├── frame_000001.png
-│   ├── frame_000002.png
-│   └── ...
-└── annotations.xml
-
-The XML annotations should follow the GESCAM format with person bounding boxes and line of sight polylines.
-
-Training
-pythonCopypython gescam_kaggle_script.py
-This will:
-
-Load and preprocess the dataset
-Train the MS-GESCAM model
-Save checkpoints and visualizations
-Evaluate the model on a validation set
-
-Validation
-pythonCopypython gescam_validation.py
-This will:
-
-Load a trained model
-Evaluate performance using metrics like AUC, distance error, and angular error
-Generate visualizations of model predictions
-Create an attention heatmap video showing where everyone is looking
-
-Results
 Current validation metrics:
 
-AUC: 0.6197 ± 0.1300
-Distance Error: 0.4264 ± 0.2001
-Angular Error: 0.01° ± 0.01°
-In-frame Accuracy: 1.0000
+1. __AUC__: 0.6197 ± 0.1300
+2. __Distance Error__: 0.4264 ± 0.2001
+3. __Angular Error__: 0.01° ± 0.01°
+4. __In-frame Accuracy__: 1.0000
 
 For comparison, state-of-the-art results from the papers:
 
-AUC of 0.921 on GazeFollow dataset
-AUC of 0.860 on VideoAttentionTarget dataset
-AUC of 0.943 on the full GESCAM dataset
+1. AUC of 0.921 on GazeFollow dataset
+2. AUC of 0.860 on VideoAttentionTarget dataset
+3. AUC of 0.943 on the full GESCAM dataset
 
-Visualization
+## Visualization
+
 The system generates multiple types of visualizations:
 
-Individual predictions:
+### Individual predictions
 
-Scene image with person bounding box
-Predicted and ground truth gaze heatmaps
-Heatmap overlays on the original image
-Error heatmap showing prediction differences
+1. Scene image with person bounding box
+2. Predicted and ground truth gaze heatmaps
+3. Heatmap overlays on the original image
+4. Error heatmap showing prediction differences
 
-
-Attention heatmap video:
+### Attention heatmap video
 
 Combined heatmap showing where everyone in the classroom is looking
 Helps identify attention hotspots and patterns
 
-
-
-Future Work
+## POST MIDTERM
 
 Performance improvements:
 
-Train for more epochs
-Use more data or better augmentation
-Experiment with different architectures
+1. Train for more epochs
+2. Use more data or better augmentation
+3. Experiment with different architectures
 
 
-Analysis tools:
+### Analysis tools:
 
-Quantify classroom attention patterns
-Identify areas of high/low student engagement
-Track attention over time
+1. Quantify classroom attention patterns
+2. Identify areas of high/low student engagement
+3. Track attention over time
 
+## Applications:
 
-Applications:
-
-Real-time classroom attention monitoring
-Educational research tools
-Feedback systems for teachers
-
-
-
-References
-
-Chong, E., Wang, Y., Ruiz, N., & Rehg, J. M. (2020). Detecting Attended Visual Targets in Video. CVPR 2020.
-Mathew, A. M., Khan, A. A., Khalid, T., & Souissi, R. (2024). GESCAM: A Dataset and Method on Gaze Estimation for Classroom Attention Measurement. CVPR Workshop 2024.
-
-License
-[Specify your license information here]
-Acknowledgments
-
-The GESCAM dataset creators
-PyTorch team for the deep learning framework
-[Add any other acknowledgments]
+1. Real-time classroom attention monitoring
+2. Educational research tools
+3. Feedback systems for teachers
