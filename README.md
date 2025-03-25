@@ -1,8 +1,11 @@
-# GESCAM: Gaze Estimation for Classroom Attention Measurement
+# Project: Real-Time Gaze Tracking for Enhanced Student Engagement: Introducing MS-GESCAM in Classroom Settings
+ 
+ ## Overview
+ This repository is part of a collaborative project by Group 5 in the 18-799-RW Applied Computer Vision Course at CMU-Africa. Our project seeks to provide a cost-effective, scalable solution for gaze tracking in educational settings and provide actionable feedback. 
+ 
+ This repository contains code for training and evaluating gaze estimation models on the GESCAM dataset. The system detects where people in classroom environments are looking based on their head position and appearance.
 
-This repository contains code for training and evaluating gaze estimation models on the GESCAM dataset. The system detects where people in classroom environments are looking based on their head position and appearance.
-Overview
-The GESCAM system uses a multi-stream architecture to predict gaze targets in classroom settings. The model takes as input:
+ The GESCAM system uses a multi-stream architecture to predict gaze targets in classroom settings. The model takes as input:
 
 1. The full classroom image
 2. A crop of each person's head
@@ -17,16 +20,21 @@ The input and output is summarized in the video below:
 
 ![GESCAM Demo](./assets/Visualization.gif)
 
-## Dataset
-
+ ## Project Objective
+ The project objectives are to track the students' gaze in real time using affordable webcams to ensure accessibility for schools, analyze real-time gaze and classroom context to provide clear and actionable feedback for teachers, ensure the system works effectively in diverse settings, such as large lecture halls or online classes, to support scalability, and develop a model that can be integrated into video conferencing tools such as Zoom or Google Meet.
+ 
+ ## Committing Experiments
+ This repository serves as a comprehensive record of all experiments conducted for the project which will allow all the group members and stakeholders to track progress and ensure transparency in our research project.
+ 
+ ## Datasets
 The GESCAM dataset consists of annotated classroom images with:
 
 1. Person bounding boxes
 2. Gaze direction polylines
 3. Frame metadata
 
-The dataset loader processes these annotations to create training samples by matching each person to their corresponding gaze target.
-
+The dataset loader processes these annotations to create training samples by matching each person to their corresponding gaze target. For more information about the GESCAM dataset used in our experiments, visit [GESCAM Project Page](https://athulmmathew.github.io/GESCAM/).
+ 
 ## Model Architecture
 
 The MS-GESCAM model uses a multi-stream architecture:
@@ -104,3 +112,11 @@ Performance improvements:
 1. Real-time classroom attention monitoring
 2. Educational research tools
 3. Feedback systems for teachers
+
+ ## Group 5 Members Contacts
+ - bkoech@andrew.cmu.edu
+ - ooe@andrew.cmu.edu
+ - amuhairw@andrew.cmu.edu
+ 
+ ## Acknowledgments
+ Special thanks to our course instructors (Prof: Moise, Prof: Assane, and Gabrial) and our TA mentor (Brian Bosho) for their guidance and support throughout the project.
