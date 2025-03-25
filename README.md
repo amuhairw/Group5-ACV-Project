@@ -81,6 +81,10 @@ Helps identify attention hotspots and patterns
 
 ![GESCAM Demo](./assets/Attention_map.gif)
 
+For a combined weighted attention, the video below shows the aggregated instance of gaze direction per frame
+
+![GESCAM Demo](./assets/attention_heatmap%20%20-%20full%20data.gif)
+
 ## POST MIDTERM
 
 Performance improvements:
@@ -88,7 +92,6 @@ Performance improvements:
 1. Train for more epochs
 2. Use more data or better augmentation
 3. Experiment with different architectures
-
 
 ### Analysis tools:
 
