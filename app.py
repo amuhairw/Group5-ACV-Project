@@ -1,17 +1,18 @@
-import dash
-from dash import dcc, html, Input, Output, State, dash_table
-import plotly.express as px
-import cv2
-import numpy as np
-import pandas as pd
-from datetime import datetime
-import time
-import threading
-import random
+import base64
 import os
+import time
+from functools import lru_cache
+
+import dash
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import requests
+from dash import Dash, Input, Output, State, dcc, html
+from dash.exceptions import PreventUpdate
 
 # Initialize the Dash app with external styles
-app = dash.Dash(__name__, external_stylesheets=[
+app = Dash(__name__, external_stylesheets=[
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css',
     'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap'
 ])
@@ -29,157 +30,38 @@ classroom_config = {
     ]
 }
 
-students = [
-    {"id": 1, "name": "Amon Muhairwe", "seat": 0},
-    {"id": 2, "name": "Osen", "seat": 1},
-    {"id": 3, "name": "Kip", "seat": 2},
-    {"id": 4, "name": "David", "seat": 3}
-]
-
 # Global Variables
-current_frame = None
-frame_lock = threading.Lock()
-analysis_mode = "realtime"
-video_processing = False
-processed_results = None
-webcam = None
-webcam_active = False
-attention_scores = [random.uniform(0.6, 0.9) for _ in range(4)]
-
-# Recording variables
-is_recording = False
-video_writer = None
-recording_start_time = None
-recording_dir = "recordings"
-os.makedirs(recording_dir, exist_ok=True)
-
-# Webcam Initialization
-def init_webcam():
-    global webcam, webcam_active
+analysis_mode = "upload"  # Fixed to upload
+attention_data = None  # Store latest /analyze_frame results
+@lru_cache(maxsize=128)
+def analyze_frame_cache(key):
+    # This function will be called with a cache_key like "upload_id_frame_idx"
+    # Split the key to get upload_id and frame_idx
+    upload_id, frame_idx = key.split('_')
+    frame_idx = int(frame_idx)
     try:
-        webcam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        if webcam.isOpened():
-            webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            webcam_active = True
-            return True
-        return False
-    except:
-        return False
+        print(f"Fetching fresh data for cache_key: {key}")
+        response = requests.post(
+            API_ANALYZE_FRAME,
+            json={'upload_id': upload_id, 'frame_idx': frame_idx},
+            timeout=1,
+            verify=False
+        )
+        print(f"/analyze_frame status: {response.status_code}, response: {response.text}")
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        print(f"Error in /analyze_frame request for cache_key {key}: {str(e)}")
+        return None
 
-# Generate mock classroom frame
-def generate_mock_frame():
-    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-    frame[:] = (240, 240, 240)
-    
-    # Draw classroom elements
-    cv2.rectangle(frame, (384, 72), (896, 216), (200, 200, 255), -1)
-    cv2.putText(frame, "Teacher", (512, 144), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-    
-    cv2.rectangle(frame, (128, 72), (1152, 216), (220, 220, 180), -1)
-    cv2.putText(frame, "Board", (576, 144), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-    
-    # Draw student areas
-    areas = [(128, 288, 384, 576), (384, 288, 640, 576), 
-             (640, 288, 896, 576), (896, 288, 1152, 576)]
-    
-    for i, (x1, y1, x2, y2) in enumerate(areas):
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (200, 255, 200), 2)
-        head_center = ((x1+x2)//2, (y1+y2)//2)
-        cv2.circle(frame, head_center, 30, (255, 0, 0), -1)
-        cv2.putText(frame, f"S{i+1}", (head_center[0]-15, head_center[1]+5), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
-    return frame
-
-# Start recording function
-def start_recording():
-    global is_recording, video_writer, recording_start_time
-    
-    if not webcam_active:
-        print("Cannot record - no webcam available")
-        return False
-    
-    recording_start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{recording_dir}/lecture_{recording_start_time}.mp4"
-    
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(
-        filename,
-        fourcc,
-        10.0,
-        (1280, 720)
-    )
-    
-    is_recording = True
-    print(f"Started recording: {filename}")
-    return True
-
-# Stop recording function
-def stop_recording():
-    global is_recording, video_writer
-    
-    if video_writer is not None:
-        video_writer.release()
-        video_writer = None
-    
-    is_recording = False
-    print("Stopped recording")
-
-# Webcam feed simulation
-def webcam_feed():
-    global current_frame, attention_scores, webcam_active, is_recording, video_writer
-    
-    while analysis_mode == "realtime" and not video_processing:
-        if webcam_active:
-            try:
-                ret, frame = webcam.read()
-                if not ret:
-                    print("Webcam frame read failed, switching to mock feed")
-                    webcam_active = False
-                    continue
-                
-                frame = cv2.resize(frame, (1280, 720))
-                
-                if is_recording and video_writer is not None:
-                    video_writer.write(frame)
-                
-                attention_scores = [max(0, min(1, score + random.uniform(-0.05, 0.05))) for score in attention_scores]
-                
-                h, w = frame.shape[:2]
-                for i, score in enumerate(attention_scores):
-                    if score > 0.5:
-                        x = int(w/2 + random.gauss(0, w/8 * (1 - score)))
-                        y = int(h/3 + random.gauss(0, h/8 * (1 - score)))
-                        cv2.circle(frame, (x, y), 10, (0, 255, 0), -1)
-                    else:
-                        x = random.randint(0, w)
-                        y = random.randint(0, h)
-                        cv2.circle(frame, (x, y), 10, (0, 0, 255), -1)
-                
-                with frame_lock:
-                    current_frame = frame.copy()
-            except Exception as e:
-                print(f"Webcam error: {e}")
-                webcam_active = False
-        else:
-            frame = generate_mock_frame()
-            attention_scores = [max(0, min(1, score + random.uniform(-0.05, 0.05))) for score in attention_scores]
-            with frame_lock:
-                current_frame = frame.copy()
-        
-        time.sleep(0.1)
-    
-    if video_writer is not None:
-        video_writer.release()
-
-# Initialize webcam and start thread
-if init_webcam():
-    print("Webcam initialized successfully")
-else:
-    print("Webcam initialization failed, using mock feed")
-webcam_thread = threading.Thread(target=webcam_feed, daemon=True)
-webcam_thread.start()
+# API Endpoints
+NGROK_URL = input("Enter the ngrok URL (e.g., https://7841-34-83-220-117.ngrok-free.app): ").rstrip('/')
+API_UPLOAD_FRAME = f"{NGROK_URL}/upload_frame"
+API_GET_FRAME = f"{NGROK_URL}/get_frame"
+API_ANALYZE_FRAME = f"{NGROK_URL}/analyze_frame"
+API_ANALYZE_TEMPORAL = f"{NGROK_URL}/analyze_temporal"
+API_VISUALIZE_FRAME = f"{NGROK_URL}/visualize_frame"
 
 # Custom CSS styles
 custom_styles = {
@@ -317,62 +199,55 @@ app.layout = html.Div([
                 dcc.RadioItems(
                     id='analysis-mode',
                     options=[
-                        {'label': html.Span([
-                            html.I(className="fas fa-video", style={'marginRight': '10px'}),
-                            "Real-time Monitoring"
-                        ], style={'display': 'flex', 'alignItems': 'center'}), 
-                        'value': 'realtime'},
-                        {'label': html.Span([
-                            html.I(className="fas fa-upload", style={'marginRight': '10px'}),
-                            "Upload Recording"
-                        ], style={'display': 'flex', 'alignItems': 'center'}), 
-                        'value': 'upload'}
+                        {
+                            'label': html.Span([
+                                html.I(className="fas fa-video", style={'marginRight': '10px'}),
+                                "Real-time Monitoring"
+                            ], style={'display': 'flex', 'alignItems': 'center'}),
+                            'value': 'realtime',
+                            'disabled': True
+                        },
+                        {
+                            'label': html.Span([
+                                html.I(className="fas fa-upload", style={'marginRight': '10px'}),
+                                "Upload Recording"
+                            ], style={'display': 'flex', 'alignItems': 'center'}),
+                            'value': 'upload'
+                        }
                     ],
-                    value='realtime',
+                    value='upload',
                     labelStyle={'display': 'block', 'marginBottom': '15px'},
                     inputStyle={'marginRight': '10px'}
                 )
             ], style=custom_styles['card']),
             
-            html.Div(id='upload-section', style={'display': 'none'}),
-            
-            # Recording Card
+            # Upload Section
             html.Div([
-                html.H4("Lecture Recording", style={
-                    'marginBottom': '1rem',
+                dcc.Upload(
+                    id='upload-video',
+                    children=html.Div([
+                        html.I(className="fas fa-cloud-upload-alt", style={'fontSize': '2rem', 'marginBottom': '1rem'}),
+                        html.P("Drag and Drop or Click to Select Image/Video (PNG/JPEG/MP4)")
+                    ], style={'textAlign': 'center', 'padding': '2rem'}),
+                    style={
+                        'width': '100%',
+                        'borderWidth': '2px',
+                        'borderStyle': 'dashed',
+                        'borderRadius': '8px',
+                        'textAlign': 'center',
+                        'marginBottom': '1rem',
+                        'cursor': 'pointer',
+                        'borderColor': '#3498db',
+                        'background': 'rgba(52, 152, 219, 0.05)'
+                    },
+                    multiple=False,
+                    accept='image/png,image/jpeg,video/mp4'
+                ),
+                html.Div(id='upload-status', style={
                     'color': '#2c3e50',
-                    'display': 'flex',
-                    'alignItems': 'center'
-                }),
-                html.Div(id='recording-status', style={
-                    'background': 'linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%)',
-                    'color': 'white',
-                    'padding': '0.75rem',
-                    'borderRadius': '8px',
-                    'marginBottom': '1rem',
                     'textAlign': 'center',
-                    'fontWeight': '600'
-                }),
-                html.Div([
-                    html.Button(
-                        html.Span([
-                            html.I(className="fas fa-circle", style={'marginRight': '8px'}),
-                            "Start Recording"
-                        ]),
-                        id='start-recording',
-                        n_clicks=0,
-                        style=custom_styles['button']['danger']
-                    ),
-                    html.Button(
-                        html.Span([
-                            html.I(className="fas fa-stop", style={'marginRight': '8px'}),
-                            "Stop Recording"
-                        ]),
-                        id='stop-recording',
-                        n_clicks=0,
-                        style={**custom_styles['button']['secondary'], 'marginLeft': '10px'}
-                    )
-                ], style={'display': 'flex', 'justifyContent': 'center'})
+                    'padding': '0.5rem'
+                })
             ], style=custom_styles['card']),
             
             # Overall Attention Card
@@ -383,7 +258,7 @@ app.layout = html.Div([
                     'display': 'flex',
                     'alignItems': 'center'
                 }),
-                html.Div(id='overall-attention-score', style={
+                html.Div(id='overall-attention-score', children="N/A", style={
                     'fontSize': '2.5rem',
                     'fontWeight': '700',
                     'textAlign': 'center',
@@ -407,11 +282,11 @@ app.layout = html.Div([
             # Video Display Card
             html.Div([
                 html.Div([
-                    html.H3(id='view-title', style={
+                    html.H3(id='view-title', children="Lecture Recording Analysis", style={
                         'marginBottom': '0.5rem',
                         'color': '#2c3e50'
                     }),
-                    html.P("Live classroom monitoring and analysis", style={
+                    html.P("Upload an image or video for classroom analysis", style={
                         'marginTop': '0',
                         'color': '#7f8c8d',
                         'marginBottom': '1.5rem'
@@ -448,8 +323,23 @@ app.layout = html.Div([
                     )
                 ], style={'marginBottom': '1.5rem'}),
                 
+                # Frame Selector Slider
+                html.Div([
+                    html.Label("Select Frame:", style={'marginRight': '10px'}),
+                    dcc.Slider(
+                        id='frame-selector',
+                        min=0,
+                        max=0,
+                        step=1,
+                        value=0,
+                        marks=None,
+                        tooltip={"placement": "bottom", "always_visible": True}
+                    )
+                ], style={'marginBottom': '1rem'}),
+                
                 html.Div(
                     id='video-display',
+                    children=html.P("Upload an image or video to view analysis", style={'textAlign': 'center', 'padding': '2rem'}),
                     style={
                         'borderRadius': '10px',
                         'overflow': 'hidden',
@@ -510,12 +400,12 @@ app.layout = html.Div([
                 }),
                 dcc.Dropdown(
                     id='student-selector',
-                    options=[{'label': s['name'], 'value': s['id']} for s in students],
-                    value=students[0]['id'],
+                    options=[],
+                    value=None,
                     clearable=False,
                     style={'marginBottom': '1.5rem'}
                 ),
-                html.Div(id='student-details')
+                html.Div(id='student-details', children="No student data available")
             ], style=custom_styles['card'])
         ], className="three columns")
     ], className="row", style={
@@ -525,10 +415,13 @@ app.layout = html.Div([
     }),
     
     # Hidden stores
+    dcc.Store(id='upload-data', data={'upload_id': None, 'frame_count': 0}),
     dcc.Store(id='historical-data', data={'timestamps': [], 'scores': []}),
     dcc.Store(id='session-data'),
-    dcc.Store(id='display-mode', data='heatmap'),
-    dcc.Interval(id='live-update', interval=1000)
+    dcc.Store(id='display-mode', data='raw'),
+    dcc.Store(id='upload-timestamp', data=None),
+    dcc.Interval(id='live-update', interval=1000, disabled=True),
+    html.Div(id='dummy-output', style={'display': 'none'})
 ], style={
     'fontFamily': '"Open Sans", sans-serif',
     'backgroundColor': '#f8f9fa',
@@ -536,318 +429,64 @@ app.layout = html.Div([
     'paddingBottom': '2rem'
 })
 
-# Callbacks
-@app.callback(
-    [Output('upload-section', 'style'),
-     Output('upload-section', 'children'),
-     Output('live-update', 'disabled'),
-     Output('view-title', 'children')],
-    [Input('analysis-mode', 'value')]
-)
-def update_mode(mode):
-    global analysis_mode
-    analysis_mode = mode
-    
-    if mode == "upload":
-        upload_section = html.Div([
-            dcc.Upload(
-                id='upload-video',
-                children=html.Div([
-                    html.Div([
-                        html.I(className="fas fa-cloud-upload-alt", style={'fontSize': '2rem', 'marginBottom': '1rem'}),
-                        html.P("Drag and Drop or Click to Select Video", style={'marginBottom': '0'})
-                    ], style={'textAlign': 'center', 'padding': '2rem'})
-                ]),
-                style={
-                    'width': '100%',
-                    'borderWidth': '2px',
-                    'borderStyle': 'dashed',
-                    'borderRadius': '8px',
-                    'textAlign': 'center',
-                    'marginBottom': '1.5rem',
-                    'cursor': 'pointer',
-                    'borderColor': '#3498db',
-                    'background': 'rgba(52, 152, 219, 0.05)',
-                    'transition': 'all 0.3s ease'
-                },
-                multiple=False
-            ),
-            html.Div(id='upload-status')
-        ])
-        return {'display': 'block'}, upload_section, True, "Lecture Recording Analysis"
-    else:
-        return {'display': 'none'}, None, False, "Live Classroom Monitoring"
-
-@app.callback(
-    Output('display-mode', 'data'),
-    [Input('display-mode-raw', 'n_clicks'),
-     Input('display-mode-heatmap', 'n_clicks'),
-     Input('display-mode-engagement', 'n_clicks')],
-    [State('display-mode', 'data')]
-)
-def update_display_mode(raw_clicks, heatmap_clicks, engagement_clicks, current_mode):
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        return current_mode
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    return button_id.split('-')[-1]
-
-# Recording control callback
-@app.callback(
-    [Output('recording-status', 'children'),
-     Output('recording-status', 'style')],
-    [Input('start-recording', 'n_clicks'),
-     Input('stop-recording', 'n_clicks')]
-)
-def control_recording(start_clicks, stop_clicks):
-    ctx = dash.callback_context
-    
-    if not ctx.triggered:
-        return "Ready to record", {
-            'background': 'linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%)'
-        }
-    
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    
-    if button_id == 'start-recording':
-        success = start_recording()
-        if success:
-            return "● Recording...", {
-                'background': 'linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)'
-            }
-        else:
-            return "Recording failed", {
-                'background': 'linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%)'
-            }
-    else:
-        stop_recording()
-        return "Recording saved", {
-            'background': 'linear-gradient(135deg, #2ecc71 0%, #27ae60 100%)'
-        }
-
-@app.callback(
-    [Output('video-display', 'children'),
-     Output('engagement-chart', 'figure'),
-     Output('attention-trend', 'figure'),
-     Output('engagement-alert', 'children'),
-     Output('historical-data', 'data'),
-     Output('session-data', 'data'),
-     Output('overall-attention-score', 'children'),
-     Output('student-scores-chart', 'figure')],
-    [Input('live-update', 'n_intervals'),
-     Input('display-mode', 'data'),
-     Input('analysis-mode', 'value')],
-    [State('historical-data', 'data'),
-     State('session-data', 'data')]
-)
-def update_dashboard(n, display_mode, mode, historical_data, session_data):
-    global attention_scores
-    
-    # Get current frame
-    with frame_lock:
-        frame = current_frame.copy() if current_frame is not None else generate_mock_frame()
-    
-    avg_score = np.mean(attention_scores)
-    
-    # Update historical data
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    if len(historical_data['timestamps']) == 0 or historical_data['timestamps'][-1] != timestamp:
-        historical_data['timestamps'].append(timestamp)
-        historical_data['scores'].append(avg_score)
-        if len(historical_data['timestamps']) > 20:
-            historical_data['timestamps'].pop(0)
-            historical_data['scores'].pop(0)
-    
-    # Generate display based on mode
-    if display_mode == 'raw':
-        video_display = generate_live_view(frame)
-    elif display_mode == 'heatmap':
-        video_display = generate_heatmap_view(frame)
-    else:
-        video_display = generate_engagement_view(frame, attention_scores)
-    
-    # Generate charts
-    engagement_fig = generate_engagement_figure(avg_score)
-    trend_fig = generate_trend_figure(historical_data)
-    alert = generate_alert(avg_score)
-    
-    # Student scores chart
-    student_fig = px.bar(
-        x=[s['name'] for s in students],
-        y=attention_scores,
-        labels={'x': 'Student', 'y': 'Attention Score'},
-        range_y=[0, 1],
-        color=[s['name'] for s in students],
-        color_discrete_sequence=['#3498db', '#2ecc71', '#f39c12', '#e74c3c']
-    )
-    student_fig.update_layout(
-        margin=dict(l=20, r=20, t=30, b=20),
-        showlegend=False,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        font={'family': '"Open Sans", sans-serif'}
-    )
-    student_fig.update_traces(marker_line_width=0)
-    
-    return (video_display, engagement_fig, trend_fig, alert, 
-            historical_data, session_data, 
-            f"{avg_score:.0%}", student_fig)
-
-@app.callback(
-    Output('student-details', 'children'),
-    [Input('student-selector', 'value')]
-)
-def update_student_details(student_id):
-    student = next(s for s in students if s['id'] == student_id)
-    score = attention_scores[student['seat']]
-    
-    return html.Div([
-        html.Div([
-            html.Div([
-                html.Img(
-                    src=f"https://ui-avatars.com/api/?name={student['name'].replace(' ', '+')}&background=random&size=100",
-                    style={
-                        'width': '80px',
-                        'height': '80px',
-                        'borderRadius': '50%',
-                        'objectFit': 'cover',
-                        'marginBottom': '1rem',
-                        'boxShadow': '0 4px 10px rgba(0,0,0,0.1)'
-                    }
-                ),
-                html.H4(student['name'], style={
-                    'textAlign': 'center',
-                    'margin': '0 0 0.5rem 0',
-                    'color': '#2c3e50'
-                }),
-                html.Div(f"Seat {student['seat'] + 1}", style={
-                    'textAlign': 'center',
-                    'color': '#7f8c8d',
-                    'marginBottom': '1.5rem',
-                    'fontSize': '0.9rem'
-                })
-            ], style={'textAlign': 'center'})
-        ], style={'marginBottom': '1.5rem'}),
-        
-        html.Div([
-            html.Div("Current Attention", style={
-                'fontSize': '0.9rem',
-                'color': '#7f8c8d',
-                'textAlign': 'center',
-                'marginBottom': '0.5rem'
-            }),
-            html.Div([
-                html.Div(f"{score:.0%}", style={
-                    'fontSize': '2rem',
-                    'fontWeight': '700',
-                    'textAlign': 'center',
-                    'color': '#2c3e50'
-                }),
-                html.Div([
-                    html.I(className="fas fa-arrow-up" if score > 0.6 else "fas fa-arrow-down", style={
-                        'marginRight': '5px',
-                        'color': '#2ecc71' if score > 0.6 else '#e74c3c'
-                    }),
-                    "2% from last 5 min" if score > 0.6 else "5% from last 5 min"
-                ], style={
-                    'textAlign': 'center',
-                    'color': '#7f8c8d',
-                    'fontSize': '0.8rem'
-                })
-            ], style={
-                'background': 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
-                'padding': '1.5rem',
-                'borderRadius': '10px',
-                'marginBottom': '1.5rem',
-                'boxShadow': 'inset 0 4px 15px rgba(0,0,0,0.05)'
-            })
-        ]),
-        
-        dcc.Graph(
-            figure={
-                'data': [{
-                    'x': ['Attention'], 
-                    'y': [score], 
-                    'type': 'bar',
-                    'marker': {'color': '#3498db'}
-                }],
-                'layout': {
-                    'yaxis': {'range': [0, 1]},
-                    'margin': {'l': 40, 'r': 40, 't': 30, 'b': 30},
-                    'height': 200,
-                    'plot_bgcolor': 'rgba(0,0,0,0)',
-                    'paper_bgcolor': 'rgba(0,0,0,0)'
-                }
-            },
-            config={'displayModeBar': False}
-        )
-    ])
-
 # Visualization functions
-def generate_live_view(frame):
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    fig = px.imshow(frame_rgb)
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False)
-    )
-    return dcc.Graph(
-        figure=fig,
-        style={'height': '100%'},
-        config={'staticPlot': True}
-    )
+def generate_live_view(upload_id, frame_idx):
+    try:
+        response = requests.post(
+            API_GET_FRAME,
+            json={'upload_id': upload_id, 'frame_idx': frame_idx},
+            timeout=1,
+            verify=False
+        )
+        print(f"/get_frame response: {response.json()}")
+        if response.status_code == 200:
+            frame_base64 = response.json().get('original_frame')
+            return html.Img(
+                src=f"data:image/jpeg;base64,{frame_base64}",
+                style={'width': '100%', 'height': '100%', 'objectFit': 'contain'},
+                key=f"raw-{frame_idx}"
+            )
+        return html.P(f"Failed to load frame: {response.json().get('error', 'Unknown error')}", style={'textAlign': 'center', 'padding': '2rem'})
+    except Exception as e:
+        return html.P(f"Error loading frame: {str(e)}", style={'textAlign': 'center', 'padding': '2rem'})
 
-def generate_heatmap_view(frame):
-    h, w = frame.shape[:2]
-    heatmap = np.zeros((h, w), dtype=np.float32)
-    for _ in range(4):
-        x = random.randint(0, w)
-        y = random.randint(0, h)
-        cv2.circle(heatmap, (x, y), 50, 255, -1)
-    heatmap = cv2.GaussianBlur(heatmap, (101, 101), 0)
-    heatmap = heatmap / heatmap.max() if heatmap.max() > 0 else heatmap
-    heatmap_colored = cv2.applyColorMap((heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    overlay = cv2.addWeighted(frame, 0.7, heatmap_colored, 0.3, 0)
-    overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-    fig = px.imshow(overlay_rgb)
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False)
-    )
-    return dcc.Graph(
-        figure=fig,
-        style={'height': '100%'},
-        config={'staticPlot': True}
-    )
+def generate_heatmap_view(upload_id, frame_idx):
+    try:
+        response = requests.post(
+            API_VISUALIZE_FRAME,
+            json={'upload_id': upload_id, 'frame_idx': frame_idx, 'vis_type': 'heatmap'},
+            timeout=1,
+            verify=False
+        )
+        print(f"/visualize_frame (heatmap) response: {response.json()}")
+        if response.status_code == 200:
+            vis_data = response.json().get('vis_image')
+            return html.P(f"Heatmap Path: {vis_data}", style={'textAlign': 'center', 'padding': '2rem'})
+        return html.P(f"Heatmap failed: {response.json().get('error', 'Unknown error')}", style={'textAlign': 'center', 'padding': '2rem'})
+    except Exception as e:
+        return html.P(f"Heatmap error: {str(e)}", style={'textAlign': 'center', 'padding': '2rem'})
 
-def generate_engagement_view(frame, scores):
-    viz_frame = frame.copy()
-    h, w = frame.shape[:2]
-    for i, score in enumerate(scores):
-        area = classroom_config["student_areas"][i]
-        x = int(w * (area[0] + area[2]) / 2)
-        y = int(h * (area[1] + area[3]) / 2)
-        color = (0, 255, 0) if score > 0.7 else (0, 255, 255) if score > 0.4 else (0, 0, 255)
-        cv2.circle(viz_frame, (x, y), 30, color, -1)
-        cv2.putText(viz_frame, f"{score:.0%}", (x-15, y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    viz_frame_rgb = cv2.cvtColor(viz_frame, cv2.COLOR_BGR2RGB)
-    fig = px.imshow(viz_frame_rgb)
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False)
-    )
-    return dcc.Graph(
-        figure=fig,
-        style={'height': '100%'},
-        config={'staticPlot': True}
-    )
+def generate_engagement_view(upload_id, frame_idx):
+    try:
+        response = requests.post(
+            API_VISUALIZE_FRAME,
+            json={'upload_id': upload_id, 'frame_idx': frame_idx, 'vis_type': 'engagement'},
+            timeout=1,
+            verify=False
+        )
+        print(f"/visualize_frame (engagement) response: {response.json()}")
+        if response.status_code == 200:
+            vis_data = response.json().get('vis_image')
+            return html.P(f"Engagement: {vis_data}", style={'textAlign': 'center', 'padding': '2rem'})
+        return html.P(f"Engagement view failed: {response.json().get('error', 'Unknown error')}", style={'textAlign': 'center', 'padding': '2rem'})
+    except Exception as e:
+        return html.P(f"Engagement view error: {str(e)}", style={'textAlign': 'center', 'padding': '2rem'})
 
 def generate_engagement_figure(score):
+    engaged = score if 0 <= score <= 1 else 0
+    not_engaged = 1 - engaged
     fig = px.pie(
-        values=[score, 1-score],
+        values=[engaged, not_engaged],
         names=["Engaged", "Not Engaged"],
         hole=0.4,
         color_discrete_sequence=['#2ecc71', '#e74c3c']
@@ -868,39 +507,8 @@ def generate_engagement_figure(score):
     )
     return fig
 
-def generate_trend_figure(historical_data):
-    if len(historical_data['timestamps']) > 0:
-        df = pd.DataFrame({
-            'Time': historical_data['timestamps'],
-            'Engagement': historical_data['scores']
-        })
-        fig = px.line(
-            df,
-            x='Time',
-            y='Engagement',
-            markers=True,
-            line_shape='spline'
-        )
-        fig.update_traces(
-            line=dict(color='#3498db', width=3),
-            marker=dict(color='#3498db', size=8)
-        )
-        fig.update_layout(
-            margin=dict(l=20, r=20, t=50, b=20),
-            yaxis=dict(
-                range=[0, 1],
-                gridcolor='rgba(0,0,0,0.05)',
-                zeroline=False
-            ),
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font={'family': '"Open Sans", sans-serif'},
-            xaxis=dict(
-                showgrid=False,
-                zeroline=False
-            )
-        )
-    else:
+def generate_trend_figure(upload_id, frame_count):
+    if not upload_id:
         fig = px.line()
         fig.update_layout(
             margin=dict(l=20, r=20, t=50, b=20),
@@ -915,53 +523,508 @@ def generate_trend_figure(historical_data):
                 font=dict(size=16)
             )]
         )
-    return fig
+        return fig
+    
+    try:
+        # Fetch temporal data
+        response = requests.post(
+            API_ANALYZE_TEMPORAL,
+            json={'upload_id': upload_id},
+            timeout=1,
+            verify=False
+        )
+        print(f"/analyze_temporal response: {response.json()}")
+        if response.status_code != 200:
+            raise Exception("Failed to fetch temporal data")
+        
+        trend_data = response.json().get('trend', [])
+        if not trend_data:
+            raise Exception("No trend data available")
+        
+        # Fetch per-frame student engagement
+        frames_data = []
+        for frame_idx in range(frame_count):
+            cache_key = f"{upload_id}_{frame_idx}"
+            frame_data = analyze_frame_cache(cache_key)
+            if frame_data:
+                frames_data.append({
+                    'frame_idx': frame_idx,
+                    'mean_attention': frame_data.get('frame_stats', {}).get('mean_attention', 0.0),
+                    'individual_scores': frame_data.get('individual_scores', [])
+                })
+            else:
+                frames_data.append({
+                    'frame_idx': frame_idx,
+                    'mean_attention': 0.0,
+                    'individual_scores': []
+                })
+        
+        # Create traces for mean attention
+        fig = go.Figure()
+        mean_trace = go.Scatter(
+            x=[item['frame_idx'] for item in frames_data],
+            y=[item['mean_attention'] for item in frames_data],
+            mode='lines+markers',
+            name='Mean Attention',
+            line=dict(color='#3498db', width=3),
+            marker=dict(size=8)
+        )
+        fig.add_trace(mean_trace)
+        
+        # Add individual person traces (optional, can be toggled in legend)
+        person_ids = set()
+        for frame in frames_data:
+            for score in frame['individual_scores']:
+                person_ids.add(score['person_idx'])
+        
+        for person_id in person_ids:
+            person_scores = []
+            for frame in frames_data:
+                score = next((s['attention_score'] for s in frame['individual_scores'] if s['person_idx'] == person_id), 0.0)
+                person_scores.append(score)
+            fig.add_trace(go.Scatter(
+                x=[item['frame_idx'] for item in frames_data],
+                y=person_scores,
+                mode='lines',
+                name=f"Person ID: {person_id}",
+                line=dict(width=1, dash='dash'),
+                visible='legendonly'  # Hidden by default, can be toggled in legend
+            ))
+        
+        # Add slider for frame navigation
+        steps = []
+        for frame_idx in range(frame_count):
+            # Prepare x and y data for all traces
+            x_data = [frame_idx]  # For mean attention trace
+            y_data = [frames_data[frame_idx]['mean_attention']]  # For mean attention trace
+            
+            # Add x and y data for each person trace
+            person_x_data = [frame_idx] * len(person_ids)
+            person_y_data = [
+                next((s['attention_score'] for s in frames_data[frame_idx]['individual_scores'] if s['person_idx'] == pid), 0.0)
+                for pid in person_ids
+            ]
+            
+            step = dict(
+                method="update",
+                args=[
+                    {
+                        "x": [x_data] + [person_x_data] * len(person_ids),  # x data for mean trace + each person trace
+                        "y": [y_data] + [[score] for score in person_y_data]  # y data for mean trace + each person trace
+                    },
+                    {"title": f"Attention Trend - Frame {frame_idx}"}
+                ],
+                label=str(frame_idx)
+            )
+            steps.append(step)
+        
+        sliders = [dict(
+            active=0,
+            currentvalue={"prefix": "Frame: "},
+            pad={"t": 50},
+            steps=steps
+        )]
+        
+        fig.update_layout(
+            margin=dict(l=20, r=20, t=50, b=20),
+            yaxis=dict(
+                range=[0, 1],
+                gridcolor='rgba(0,0,0,0.05)',
+                zeroline=False,
+                title="Attention Score"
+            ),
+            xaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                title="Frame"
+            ),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font={'family': '"Open Sans", sans-serif'},
+            sliders=sliders,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.3,
+                xanchor="center",
+                x=0.5
+            )
+        )
+        return fig
+    except Exception as e:
+        fig = px.line()
+        fig.update_layout(
+            margin=dict(l=20, r=20, t=50, b=20),
+            yaxis=dict(range=[0, 1]),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            annotations=[dict(
+                text=f"Trend data unavailable: {str(e)}",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=16)
+            )]
+        )
+        return fig
 
 def generate_alert(score):
     if score < 0.4:
         return html.Div([
-            html.Div([
-                html.I(className="fas fa-exclamation-triangle", style={'marginRight': '10px'}),
-                "Low Engagement! Consider changing activities."
-            ], style={
-                'display': 'flex',
-                'alignItems': 'center',
-                'justifyContent': 'center'
-            })
+            html.I(className="fas fa-exclamation-triangle", style={'marginRight': '10px'}),
+            "Low Engagement! Consider changing activities."
         ], style={
             **custom_styles['indicator']['danger'],
             'padding': '1rem',
-            'width': '100%'
-        })
-    elif score < 0.6:
-        return html.Div([
-            html.Div([
-                html.I(className="fas fa-exclamation-circle", style={'marginRight': '10px'}),
-                "Moderate Engagement - Some students may need support"
-            ], style={
-                'display': 'flex',
-                'alignItems': 'center',
-                'justifyContent': 'center'
-            })
-        ], style={
-            **custom_styles['indicator']['warning'],
-            'padding': '1rem',
-            'width': '100%'
-        })
-    return html.Div([
-        html.Div([
-            html.I(className="fas fa-check-circle", style={'marginRight': '10px'}),
-            "Good Engagement Level Maintained"
-        ], style={
+            'width': '100%',
             'display': 'flex',
             'alignItems': 'center',
             'justifyContent': 'center'
         })
+    elif score < 0.6:
+        return html.Div([
+            html.I(className="fas fa-exclamation-circle", style={'marginRight': '10px'}),
+            "Moderate Engagement - Some students may need support"
+        ], style={
+            **custom_styles['indicator']['warning'],
+            'padding': '1rem',
+            'width': '100%',
+            'display': 'flex',
+            'alignItems': 'center',
+            'justifyContent': 'center'
+        })
+    return html.Div([
+        html.I(className="fas fa-check-circle", style={'marginRight': '10px'}),
+        "Good Engagement Level Maintained"
     ], style={
         **custom_styles['indicator']['good'],
         'padding': '1rem',
-        'width': '100%'
+        'width': '100%',
+        'display': 'flex',
+        'alignItems': 'center',
+        'justifyContent': 'center'
     })
 
+# Callbacks
+@app.callback(
+    [Output('upload-status', 'children'),
+     Output('view-title', 'children'),
+     Output('live-update', 'disabled'),
+     Output('live-update', 'interval'),
+     Output('upload-data', 'data'),
+     Output('frame-selector', 'max'),
+     Output('frame-selector', 'value'),
+     Output('upload-timestamp', 'data')],
+    [Input('upload-video', 'contents')],
+    [State('upload-video', 'filename'),
+     State('analysis-mode', 'value')]
+)
+def handle_upload(upload_contents, upload_filename, mode):
+    global attention_data
+    upload_status = ""
+    
+    if upload_contents is None:
+        return "", "Lecture Recording Analysis", True, 1000, {'upload_id': None, 'frame_count': 0}, 0, 0, None
+    
+    try:
+        # Decode the uploaded file
+        content_type, content_string = upload_contents.split(',')
+        decoded = base64.b64decode(content_string)
+        
+        # Determine content type based on filename extension
+        file_ext = os.path.splitext(upload_filename)[1].lower()
+        if file_ext in ['.png', '.jpeg', '.jpg']:
+            mime_type = 'image/png' if file_ext == '.png' else 'image/jpeg'
+        elif file_ext in ['.mp4']:
+            mime_type = 'video/mp4'
+        else:
+            upload_status = "Unsupported file type. Please upload PNG, JPEG, or MP4."
+            return upload_status, "Lecture Recording Analysis", True, 1000, {'upload_id': None, 'frame_count': 0}, 0, 0, None
+        
+        # Upload to /upload_frame with retries
+        files = {'file': (upload_filename, decoded, mime_type)}
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"Attempt {attempt + 1}/{max_retries}: Uploading to {API_UPLOAD_FRAME}")
+                response = requests.post(
+                    API_UPLOAD_FRAME,
+                    files=files,
+                    timeout=15,
+                    verify=False
+                )
+                print(f"Upload response status: {response.status_code}, body: {response.text}")
+                break
+            except requests.exceptions.RequestException as e:
+                print(f"Upload attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise e
+                time.sleep(2)
+        
+        if response.status_code == 200:
+            response_json = response.json()
+            upload_id = response_json.get('upload_id')
+            frame_count = response_json.get('frame_count', 1)
+            upload_status = f"Uploaded {upload_filename}; Frames: {frame_count}"
+            # Clear cache on new upload
+            try:
+                analyze_frame_cache.cache_clear()
+                print("Cache cleared successfully")
+            except Exception as e:
+                print(f"Failed to clear cache: {str(e)}")
+            # Disable live updates for single-frame uploads to prevent excessive CLI logs
+            interval = 3600000 if frame_count == 1 else 1000  # 1 hour for single frame, 1 second otherwise
+            return upload_status, "Lecture Recording Analysis", frame_count == 1, interval, {'upload_id': upload_id, 'frame_count': frame_count}, frame_count - 1, 0, str(time.time())
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            upload_status = f"Upload failed: {error_msg}"
+            return upload_status, "Lecture Recording Analysis", True, 1000, {'upload_id': None, 'frame_count': 0}, 0, 0, None
+    except Exception as e:
+        upload_status = f"Error: {str(e)}"
+        return upload_status, "Lecture Recording Analysis", True, 1000, {'upload_id': None, 'frame_count': 0}, 0, 0, None
+
+@app.callback(
+    Output('display-mode', 'data'),
+    [Input('display-mode-raw', 'n_clicks'),
+     Input('display-mode-heatmap', 'n_clicks'),
+     Input('display-mode-engagement', 'n_clicks')],
+    [State('display-mode', 'data')]
+)
+def update_display_mode(raw_clicks, heatmap_clicks, engagement_clicks, current_mode):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return current_mode
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    return button_id.split('-')[-1]
+
+@app.callback(
+    Output('dummy-output', 'children'),
+    Input('display-mode', 'data')
+)
+def debug_display_mode(display_mode):
+    print(f"Display mode updated to: {display_mode}")
+    return ""
+
+@app.callback(
+    [Output('video-display', 'children'),
+     Output('engagement-chart', 'figure'),
+     Output('attention-trend', 'figure'),
+     Output('engagement-alert', 'children'),
+     Output('historical-data', 'data'),
+     Output('session-data', 'data'),
+     Output('overall-attention-score', 'children'),
+     Output('student-scores-chart', 'figure'),
+     Output('student-selector', 'options'),
+     Output('student-selector', 'value')],
+    [Input('live-update', 'n_intervals'),
+     Input('display-mode', 'data'),
+     Input('frame-selector', 'value'),
+     Input('upload-timestamp', 'data')],
+    [State('historical-data', 'data'),
+     State('session-data', 'data'),
+     State('upload-data', 'data')]
+)
+def update_dashboard(n, display_mode, selected_frame, upload_timestamp, historical_data, session_data, upload_data):
+    print(f"update_dashboard called with display_mode: {display_mode}, selected_frame: {selected_frame}")
+    print(f"upload_data: {upload_data}")
+    global attention_data
+    
+    current_upload_id = upload_data.get('upload_id')
+    frame_count = upload_data.get('frame_count', 0)
+    selected_frame = min(selected_frame, frame_count - 1) if frame_count > 0 else 0
+    
+    if not current_upload_id:
+        print("No upload_id, returning default values")
+        return (
+            html.P("Upload an image or video to view analysis", style={'textAlign': 'center', 'padding': '2rem'}),
+            px.pie(values=[0, 1], names=["Engaged", "Not Engaged"]).update_layout(margin=dict(l=20, r=20, t=50, b=20)),
+            px.line().update_layout(margin=dict(l=20, r=20, t=50, b=20), yaxis=dict(range=[0, 1])),
+            html.Div(),
+            historical_data,
+            session_data,
+            "N/A",
+            go.Figure(),
+            [],
+            None
+        )
+    
+    # Use the cache by calling the function
+    cache_key = f"{current_upload_id}_{selected_frame}"
+    attention_data = analyze_frame_cache(cache_key)
+    
+    avg_score = 0.0
+    scores = []
+    names = []
+    student_options = []
+    default_value = None
+    
+    if attention_data:
+        avg_score = attention_data.get('frame_stats', {}).get('mean_attention', 0.0)
+        individual_scores = attention_data.get('individual_scores', [])
+        scores = [score.get('attention_score', 0.0) for score in individual_scores]
+        names = [f"Person ID: {score.get('person_idx', '')}" for score in individual_scores]
+        student_options = [
+            {'label': f"Person ID: {score.get('person_idx', '')}", 'value': score.get('person_idx', '')}
+            for score in individual_scores
+        ]
+        default_value = student_options[0]['value'] if student_options else None
+    else:
+        print("No attention_data, using default values")
+    
+    historical_data['timestamps'].append(selected_frame)
+    historical_data['scores'].append(avg_score)
+    if len(historical_data['timestamps']) > 20:
+        historical_data['timestamps'].pop(0)
+        historical_data['scores'].pop(0)
+    
+    # Generate display based on mode
+    try:
+        if display_mode == 'raw':
+            video_display = generate_live_view(current_upload_id, selected_frame)
+        elif display_mode == 'heatmap':
+            video_display = generate_heatmap_view(current_upload_id, selected_frame)
+        else:  # engagement
+            video_display = generate_engagement_view(current_upload_id, selected_frame)
+    except Exception as e:
+        print(f"Error generating video display ({display_mode}): {str(e)}")
+        video_display = html.P(f"Error loading display: {str(e)}", style={'textAlign': 'center', 'padding': '2rem'})
+    
+    engagement_fig = generate_engagement_figure(avg_score)
+    try:
+        trend_fig = generate_trend_figure(current_upload_id, frame_count)
+    except Exception as e:
+        print(f"Error generating trend figure: {str(e)}")
+        trend_fig = px.line().update_layout(
+            margin=dict(l=20, r=20, t=50, b=20),
+            yaxis=dict(range=[0, 1]),
+            annotations=[dict(text=f"Trend error: {str(e)}", x=0.5, y=0.5, showarrow=False)]
+        )
+    
+    alert = generate_alert(avg_score)
+    
+    # Student scores chart
+    student_fig = go.Figure()
+    if scores and names:
+        student_fig.add_trace(go.Bar(
+            x=names,
+            y=scores,
+            marker_color=['#3498db', '#2ecc71', '#f39c12', '#e74c3c'][:len(names)],
+            marker_line_width=0
+        ))
+    student_fig.update_layout(
+        xaxis_title="Person",
+        yaxis_title="Attention Score",
+        yaxis_range=[0, 1],
+        margin=dict(l=20, r=20, t=30, b=20),
+        showlegend=False,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font={'family': '"Open Sans", sans-serif'}
+    )
+    
+    return (
+        video_display,
+        engagement_fig,
+        trend_fig,
+        alert,
+        historical_data,
+        session_data,
+        f"{avg_score:.0%}" if attention_data else "N/A",
+        student_fig,
+        student_options,
+        default_value
+    )
+
+@app.callback(
+    Output('student-details', 'children'),
+    [Input('student-selector', 'value'),
+     Input('frame-selector', 'value')],
+    [State('upload-data', 'data')]
+)
+def update_student_details(person_id, selected_frame, upload_data):
+    print(f"Selected person_id: {person_id}, type: {type(person_id)}")
+    
+    if not upload_data.get('upload_id') or person_id is None:
+        return html.Div("No person data available")
+    
+    # Fetch analysis for the selected frame
+    cache_key = f"{upload_data.get('upload_id')}_{selected_frame}"
+    frame_data = analyze_frame_cache(cache_key)
+    
+    if not frame_data:
+        return html.Div("No data for this frame")
+    
+    # Find the selected person, ensuring type match
+    person = next((score for score in frame_data.get('individual_scores', []) if str(score['person_idx']) == str(person_id)), None)
+    if not person:
+        return html.Div(f"Person {person_id} not found")
+    
+    score = person.get('attention_score', 0.0)
+    name = f"Person ID: {person['person_idx']}"
+    looking_at = person.get('looking_at', 'Unknown')
+    
+    # Fetch temporal data for trend
+    try:
+        temporal_response = requests.post(
+            API_ANALYZE_TEMPORAL,
+            json={'upload_id': upload_data.get('upload_id')},
+            timeout=1,
+            verify=False
+        )
+        if temporal_response.status_code == 200:
+            trend_data = temporal_response.json().get('trend', [])
+            person_trend = []
+            for frame_idx in range(len(trend_data)):
+                cache_key = f"{upload_data.get('upload_id')}_{frame_idx}"
+                frame_data = analyze_frame_cache(cache_key)
+                if frame_data:
+                    frame_scores = frame_data.get('individual_scores', [])
+                    person_score = next((s.get('attention_score', 0.0) for s in frame_scores if str(s['person_idx']) == str(person_id)), 0.0)
+                    person_trend.append(person_score)
+                else:
+                    person_trend.append(0.0)
+        else:
+            person_trend = [score]
+    except Exception as e:
+        print(f"Error fetching temporal data: {e}")
+        person_trend = [score]
+    
+    # Person details layout
+    return html.Div([
+        html.Div([
+            html.Img(
+                src=f"https://ui-avatars.com/api/?name={name.replace(' ', '+')}&background=random&size=100",
+                style={'width': '80px', 'height': '80px', 'borderRadius': '50%', 'objectFit': 'cover', 'marginBottom': '1rem', 'boxShadow': '0 4px 10px rgba(0,0,0,0.1)', 'display': 'block', 'marginLeft': 'auto', 'marginRight': 'auto'}
+            ),
+            html.H4(name, style={'textAlign': 'center', 'margin': '0 0 0.5rem 0', 'color': '#2c3e50'}),
+            html.Div(f"Person Index: {person['person_idx']}", style={'textAlign': 'center', 'color': '#7f8c8d', 'marginBottom': '1.5rem', 'fontSize': '0.9rem'})
+        ], style={'textAlign': 'center'}),
+        html.Div([
+            html.Div("Current Attention", style={'fontSize': '0.9rem', 'color': '#7f8c8d', 'textAlign': 'center', 'marginBottom': '0.5rem'}),
+            html.Div([
+                html.Div(f"{score:.0%}", style={'fontSize': '2rem', 'fontWeight': '700', 'textAlign': 'center', 'color': '#2c3e50'}),
+                html.Div([
+                    html.I(className="fas fa-arrow-up" if score > 0.6 else "fas fa-arrow-down", style={'marginRight': '5px', 'color': '#2ecc71' if score > 0.6 else '#e74c3c'}),
+                    f"Looking at: {looking_at}"
+                ], style={'textAlign': 'center', 'color': '#7f8c8d', 'fontSize': '0.8rem'})
+            ], style={'background': 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)', 'padding': '1.5rem', 'borderRadius': '10px', 'marginBottom': '1.5rem', 'boxShadow': 'inset 0 4px 15px rgba(0,0,0,0.05)'})
+        ]),
+        dcc.Graph(
+            figure={
+                'data': [{'x': list(range(len(person_trend))), 'y': person_trend, 'type': 'line', 'marker': {'color': '#3498db'}}],
+                'layout': {
+                    'xaxis': {'title': 'Frame'},
+                    'yaxis': {'title': 'Attention Score', 'range': [0, 1]},
+                    'margin': {'l': 40, 'r': 40, 't': 30, 'b': 30},
+                    'height': 200,
+                    'plot_bgcolor': 'rgba(0,0,0,0)',
+                    'paper_bgcolor': 'rgba(0,0,0,0)'
+                }
+            },
+            config={'displayModeBar': False}
+        )
+    ])
+
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
